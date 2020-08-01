@@ -4,7 +4,16 @@ import time
 from threading import Event
 
 LEADER_KEY = "/key/leader"
+# if leader doesn't refresh the lease within TTL period - the new leader election process starts.
 LEASE_TTL_SEC = 10
+
+'''
+Create a new leader entry in etcd with the input lease.
+If a lease is expired (in case the leader didn't refresh it) - the related key will be expired and deleted.
+If leader key still exists - the function exit (the leader is still alive), otherwise a new entry (leader) 
+is created with the attached lease.
+
+'''
 
 
 def set_leader(client, server, lease, key):
@@ -22,6 +31,15 @@ def set_leader(client, server, lease, key):
     return status
 
 
+'''
+Start leader election:
+1. Create a lease with input TTL
+2. Call to set_leader function - to set a new leader
+;:param client: etcd3 client
+;:param server: server name, the server name attempting to become a leader
+'''
+
+
 def elect_leader(client, server):
     print("start leader election....")
     try:
@@ -33,13 +51,22 @@ def elect_leader(client, server):
     return status, lease
 
 
+'''
+This function is executed only by a leader.
+The leader must take care of refreshing the lease, otherwise the lease will be expired and the leader's key is deleted
+and new leader election will start.
+In case of exception the lease is revoked and new leader election starts
+
+'''
+
+
 def leader_work(lease):
     print('I''M A LEADER!')
     try:
         while True:
             lease.refresh()
-            # do some work
-
+            # do some leader work here
+            print('The leader is doing work...')
             time.sleep(0.5)
     except Exception:
         print("Exception in leader happened")
@@ -48,6 +75,12 @@ def leader_work(lease):
         return
     finally:
         lease.revoke()
+
+
+'''
+This function is executed only by the followers.
+All followers are in busy waiting for leader key deletion due to lease TTL or revoking by the leader itself
+'''
 
 
 def follower_work(client):
@@ -64,7 +97,8 @@ def follower_work(client):
     try:
         while not election_start_event.is_set():
             time.sleep(1)
-        # start new election
+
+        # the leader key is deleted, start the new election
     except Exception:
         print("Exception in follower happened")
         return
@@ -75,7 +109,6 @@ def follower_work(client):
 
 
 def main_leader_election(server):
-
     etcd_client = etcd3.client(timeout=3)
 
     while True:
